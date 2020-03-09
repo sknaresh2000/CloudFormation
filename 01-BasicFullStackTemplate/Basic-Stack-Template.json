@@ -1,0 +1,176 @@
+{
+"AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Full Stack Infra Code",
+    "Parameters": {
+        "EC2Keys" : {
+            "Description":"Please provide the key details",
+            "Type" : "AWS::EC2::KeyPair::KeyName"
+        },
+        "SubnetInfo" : {
+            "Description":"Please provide the subnet details",
+            "Type" : "List<AWS::EC2::Subnet::Id>"
+        },
+        "VPCInfo" : {
+            "Description":"Please provide the VPC details",
+            "Type" : "AWS::EC2::VPC::Id"
+        }
+    },
+    "Mappings": {
+        "AMIInfo": {
+            "us-east-2":{
+                "image":"ami-0e38b48473ea57778"
+            }
+        }
+    },
+
+    "Resources": {
+        "ALBSecurityGroup" : {
+            "Type" : "AWS::EC2::SecurityGroup",
+            "Properties" : {
+              "GroupDescription" : "Provides access to the world via HTTP ports",
+              "SecurityGroupIngress" : [ {
+                  "CidrIp":"0.0.0.0/0",
+                  "IpProtocol":"tcp",
+                  "FromPort" : 80,
+                  "ToPort" : 80
+              }],
+              "VpcId" : {"Ref":"VPCInfo"}
+            }
+          },
+          "EC2SecurityGroup" : {
+              "Type" : "AWS::EC2::SecurityGroup",
+              "Properties" : {
+                "GroupDescription" : "Provides access to Load Balancer",
+                "SecurityGroupIngress" : [{
+                  "FromPort" : 80,
+                  "ToPort" : 80,
+                  "IpProtocol":"tcp",
+                  "SourceSecurityGroupId" : { "Fn::GetAtt" : [ "ALBSecurityGroup", "GroupId"]}
+               }
+             ],
+                "VpcId" : {"Ref":"VPCInfo"}
+              }
+            },
+
+                "TargetGroup": {
+            "Type":"AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "HealthCheckEnabled" : true,
+                "HealthCheckIntervalSeconds" : 5,
+                "HealthCheckPath" : "/index.html",
+                "HealthCheckPort" : "80",
+                "HealthCheckProtocol" : "HTTP",
+                "HealthCheckTimeoutSeconds" : 2,
+                "HealthyThresholdCount" : 2,
+                "UnhealthyThresholdCount" : 2,
+                "TargetType":"instance",
+                "VpcId":{"Ref":"VPCInfo"},
+                "Port":80,
+                "Protocol":"HTTP"
+            }
+        },
+
+        "ASG" : {
+            "Type" : "AWS::AutoScaling::AutoScalingGroup",
+            "Properties" : {
+                "AvailabilityZones" : {"Fn::GetAZs":""},
+                "LaunchConfigurationName" : {"Ref":"EC2LaunchConfig"},
+                "HealthCheckGracePeriod":10,
+                "MinSize" : "3",
+                "MaxSize" : "3",
+                "DesiredCapacity" : "3",
+                "HealthCheckType" : "ELB",
+                "TargetGroupARNs":[{"Ref":"TargetGroup"}]
+            }
+        },
+        
+        "EC2LaunchConfig": {
+            "Type" : "AWS::AutoScaling::LaunchConfiguration",
+            "Metadata":{
+                "AWS::CloudFormation::Init" : {
+                    "config": {
+                        "packages" : {
+                            "yum" : {
+                                "httpd":[],
+                                "php":[]
+                            }
+                        },
+                        "commands" : {
+                            "index" : {
+                                "command" : "echo \"Hello World. You are connected to $(curl http://169.254.169.254/latest/meta-data/instance-id)\" >> /var/www/html/index.html"
+                            }
+                        },
+                        "services" :{
+                            "sysvinit": {
+                                "httpd" : {
+                                    "enabled":"true",
+                                    "ensureRunning":"true"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "Properties" : {
+                "ImageId" : {
+                "Fn::FindInMap": [
+                    "AMIInfo",
+                    {"Ref":"AWS::Region"},
+                    "image"
+                ]},
+                "InstanceType" : "t2.micro",
+                "KeyName" : {"Ref":"EC2Keys"},
+                "SecurityGroups" : [{"Ref":"EC2SecurityGroup"}],
+                "UserData" : {
+                    "Fn::Base64": 
+                        {   "Fn::Join": [
+                                "",
+                                [
+                                    "#!/bin/bash\n",
+                                    "yum update -y aws-cfn-bootstrap\n",
+                                    "/opt/aws/bin/cfn-init -v ",
+                                    "--stack=",{"Ref":"AWS::StackName"},
+                                    " --resource=EC2LaunchConfig",
+                                    " --region=",{"Ref":"AWS::Region"}
+                                ]
+                            
+                            ]                 
+                        }
+                }
+            }
+        },
+
+        "ApplicationLoadBalancer": {
+        "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+        "Properties": {
+            "SecurityGroups" : [{"Ref":"ALBSecurityGroup"}],
+            "Subnets" : {"Ref":"SubnetInfo"}
+        }
+        },
+
+        "ALBListener" : {
+            "Type" : "AWS::ElasticLoadBalancingV2::Listener",
+            "Properties" : {
+                "DefaultActions":[
+                    {
+                    "Type":"forward",
+                    "TargetGroupArn" : {"Ref":"TargetGroup"}
+                }
+                ],
+                "LoadBalancerArn" : {"Ref":"ApplicationLoadBalancer"},
+                "Port" : 80,
+                "Protocol" : "HTTP"
+              }
+
+        }
+
+        
+    },
+    "Outputs": {
+        "WebURL" : {"Value":
+            { 
+            "Fn::Join" : ["",[ "http://",  {"Fn::GetAtt" : [ "ApplicationLoadBalancer", "DNSName" ]} ] ]
+            }
+            }
+    }
+}
