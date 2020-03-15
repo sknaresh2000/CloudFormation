@@ -1,5 +1,5 @@
 # CloudFormation
-*This repo contains cloudformation templates and was used for learning cloudformation*
+*This repo contains cloudformation templates and can be used for learning cloudformation*
 ### 01-Basic FullStack Template
 This template creates the below resources and uses CloudFormation-Init and UserData
 - Autoscaling group with Launch Configuration
