@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ---
+Resources: 
+  "StackRole":
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "cloudformation.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns: 
+        - "arn:aws:iam::aws:policy/AdministratorAccess"
+  "iamUser":
+    Type: AWS::IAM::User
+    Properties:
+      UserName: wpsupport
+      LoginProfile:
+        Password: p@ssW0rd
+        PasswordResetRequired: false
+      ManagedPolicyArns:
+       - "arn:aws:iam::aws:policy/AdministratorAccess"
+  "iamAccessKey":
+    DependsOn: iamUser
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref iamUser
+  "customerUser":
+    Type: AWS::IAM::User
+    Properties:
+      UserName: businessUser
+      LoginProfile:
+        Password: p@ssW0rd
+        PasswordResetRequired: false
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/ReadOnlyAccess"
+  "customerRole":
+    Type: AWS::IAM::Role
+    Properties:
+      Path: "/"
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: 
+                - 'cognito-identity.amazonaws.com'
+            Condition:
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": "authenticated"
+            Action:
+              - 'sts:AssumeRoleWithWebIdentity'
+      Policies:
+        - 
+         PolicyName: "root"
+         PolicyDocument:
+           Version: "2012-10-17"
+           Statement:
+              - 
+                Effect: "Allow"
+                Action: 
+                  - "cloudformation:CreateStack"
+                  - "cloudformation:UpdateStack"
+                  - "cloudformation:DeleteStack"
+                  - "cloudformation:CreateUploadBucket"
+                  - "cloudformation:DescribeStacks"
+                  - "cloudformation:DescribeStackEvents"
+                  - "cloudformation:GetTemplateSummary"
+                  - "cloudformation:ListStacks"
+                  - "cloudformation:ListStackResources"
+                  - "s3:CreateBucket"
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "mobileanalytics:PutEvent"
+                  - "cognito-sync:*"
+                  - "cognito-identity:*"
+                Resource: "*"
+Outputs:
+  SupportUserRole:
+    Description: Stack Role arn
+    Value: !GetAtt StackRole.Arn
+  SupportUserSecureKey:
+    Description: Users secure Key
+    Value: !GetAtt iamAccessKey.SecretAccessKey
+  SupportUserAccessID:
+    Description: Users Access ID
+    Value: !Ref iamAccessKey
+  BusinessUserRole:
+    Description: Stack Role arn
+    Value: !GetAtt customerRole.Arn

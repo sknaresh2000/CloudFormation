@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create S3 buckets for storing resources and cloud formation templates
+Resources: 
+  SelfServiceBucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      AccessControl: PublicRead
+      BucketName: sknaresh2000selfservice
+      WebsiteConfiguration: 
+        "ErrorDocument" : index.html,
+        "IndexDocument" : index.html
+  ResourceBucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      AccessControl: PublicRead
+      BucketName: sknaresh2000resources
+      WebsiteConfiguration: 
+        "ErrorDocument" : index.html,
+        "IndexDocument" : index.html
+  SelfServiceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SelfServiceBucket
+      PolicyDocument: 
+        Statement: 
+          -
+            Sid: "SelfServiceBucketPolicy"
+            Action: 
+              - "s3:GetObject"
+            Effect: Allow
+            Resource: !Join ["",["arn:aws:s3:::",!Ref SelfServiceBucket,"/*"]]
+            Principal:
+              AWS:
+                - "*"
+  ResourceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ResourceBucket
+      PolicyDocument: 
+        Statement: 
+          -
+            Sid: "ResourceBucketPolicy"
+            Action: 
+              - "s3:GetObject"
+            Effect: Allow
+            Resource: !Join ["",["arn:aws:s3:::",!Ref ResourceBucket,"/*"]]
+            Principal:
+              AWS:
+                - "*"
+Outputs:
+  SelfServiceBucketWebSiteURL:
+    Value: !GetAtt [SelfServiceBucket, WebsiteURL]
+    Description: URL for SelfService website hosted on S3
+  ResourceBucketWebSiteURL:
+    Value: !GetAtt [ResourceBucket, WebsiteURL]
+    Description: URL for Resource website hosted on S3
