@@ -1,0 +1,298 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: ---
+Metadata: 
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "App Environment Configuration"
+        Parameters:
+          - Environment
+          - ApplicationVersion
+          - KeyName
+          - MinInstance
+          - MaxInstance
+          - DesiredCapacity
+      -
+        Label:
+          default: "Subnet Info"
+        Parameters:
+         - PublicSubnetA
+         - PublicSubnetB
+         - PrivateSubnetA
+         - PrivateSubnetB
+
+Parameters: 
+  PublicSubnetA:
+    Type: String
+    Description: Please provide the public subnet range for A
+    Default: "10.0.9.0/24"
+  PublicSubnetB:
+    Type: String
+    Description: Please provide the public subnet range for B
+    Default: "10.0.10.0/24"
+  PrivateSubnetA:
+    Type: String
+    Description: Please provide the private subnet range for A
+    Default: "10.0.11.0/24"
+  PrivateSubnetB:
+    Type: String
+    Description: Please provide the private subnet range for B
+    Default: "10.0.12.0/24"
+  ApplicationVersion:
+    Type: String
+    Description: Please provide the application version to deploy
+    Default: 1
+  MinInstance:
+    Type: String
+    Description: Please provide the application version to deploy
+    Default: 1
+  MaxInstance:
+    Type: String
+    Description: Please provide the application version to deploy
+    Default: 2
+  DesiredCapacity:
+    Type: String
+    Description: Please provide the application version to deploy
+    Default: 1
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Please provide the key to use for EC2 Instance
+  Environment:
+    Type: String
+    Description: Please provide the environment to deploy
+    Default: DEV
+    AllowedValues:
+      - DEV
+      - UAT
+      - PROD
+      - Sales
+
+
+Mappings: 
+  AMIInfo:
+    us-east-2:
+      LinuxAMI: "ami-0e01ce4ee18447327"
+  Environment:
+    DEV:
+      EC2: t2.micro
+    UAT:
+      EC2: t2.small
+    PROD:
+      EC2: t2.large
+    Sales:
+      EC2: t2.micro
+
+Resources: 
+  PublicSubA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ]
+      VpcId: !ImportValue infra-vpc
+      CidrBlock: !Ref PublicSubnetA
+      MapPublicIpOnLaunch: True
+  PublicSubB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ]
+      VpcId: !ImportValue infra-vpc
+      CidrBlock: !Ref PublicSubnetB
+      MapPublicIpOnLaunch: True
+  PublicSubnetRouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubA
+      RouteTableId: !ImportValue infra-publicrt
+  PublicSubnetRouteTableAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubB
+      RouteTableId: !ImportValue infra-publicrt
+
+  PrivateSubA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ]
+      VpcId: !ImportValue infra-vpc
+      CidrBlock: !Ref PrivateSubnetA
+      MapPublicIpOnLaunch: false
+  PrivateSubB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ]
+      VpcId: !ImportValue infra-vpc
+      CidrBlock: !Ref PrivateSubnetB
+      MapPublicIpOnLaunch: false
+  PrivateSubnetRouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubA
+      RouteTableId: !ImportValue infra-prvtrta
+  PrivateSubnetRouteTableAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubB
+      RouteTableId: !ImportValue infra-prvtrtb
+  ASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      HealthCheckGracePeriod: 300
+      VPCZoneIdentifier:
+       - !Ref PrivateSubA
+       - !Ref PrivateSubB
+      LaunchConfigurationName: !Ref LaunchConfig
+      HealthCheckType: ELB
+      MaxSize: !Ref MaxInstance
+      MinSize: !Ref MinInstance
+      DesiredCapacity: !Ref DesiredCapacity
+      TargetGroupARNs:
+       - !Ref TargetGroup
+    CreationPolicy:
+      ResourceSignal:
+        Count: !Ref DesiredCapacity
+        Timeout: PT5M
+      AutoScalingCreationPolicy:
+        MinSuccessfulInstancesPercent: 50
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          appconfig:
+            - 1_config_cfn
+            - 2_config_httpd
+            - 3_config_app
+        1_config_cfn:
+          files:
+            /etc/cfn/hooks.d/cfnhup1.conf: 
+              content: !Sub |
+                [reload]
+                triggers=post.update
+                path=Resources.LaunchConfig.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfig --region ${AWS::Region} --configsets appconfig
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                verbose=true
+                interval=1
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true      
+                files:
+                  - "/etc/cfn/cfn-hup.conf"
+                  - "/etc/cfn/hooks.d/cfnhup1.conf"
+        2_config_httpd:
+          packages:
+            yum:
+              httpd: []
+          services:
+            sysvinit:
+              httpd:
+                enabled: true
+                ensureRunning: true
+
+        3_config_app:
+          files:
+            /var/www/html/file.zip : 
+              source: !Join ["",[!ImportValue infra-s3-websiteurl,"/file", !Ref ApplicationVersion ,".zip"]]
+          commands:
+            unzip:
+              cwd: /var/www/html
+              command: "unzip -o file.zip"
+            testpage:
+              cwd: /var/www/html
+              command: "echo 'Hello World' > /var/www/html/index.html"
+    Properties:
+      ImageId: !FindInMap ["AMIInfo",!Ref "AWS::Region","LinuxAMI"]
+      InstanceType: !FindInMap ["Environment",!Ref Environment,"EC2"]
+      KeyName: !Ref KeyName
+      SecurityGroups:
+        - !Ref EC2SG
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfig --region ${AWS::Region} --configsets appconfig
+          yum update -y
+          curl 127.0.0.1/index.html | grep -f /var/www/html/file.test
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ASG --region ${AWS::Region}
+  
+  AppLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      IpAddressType: ipv4
+      SecurityGroups: 
+        - !Ref ELBSG
+      Subnets: 
+        - !Ref PublicSubA
+        - !Ref PublicSubB
+  
+  ELBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties: 
+      DefaultActions: 
+        - Type: forward
+          ForwardConfig: 
+            TargetGroups: 
+             - TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref AppLB
+      Port: 80
+      Protocol: HTTP
+  
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties: 
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 5
+      HealthCheckPath: /index.html
+      HealthCheckPort: 80
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 2
+      HealthyThresholdCount: 5
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 4
+      VpcId: !ImportValue infra-vpc
+
+  ELBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !ImportValue infra-vpc
+      SecurityGroupIngress:
+        - 
+          CidrIp: 0.0.0.0/0
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+      GroupDescription: Provide access to the world
+  EC2SG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: ELBSG
+    Properties:
+      VpcId: !ImportValue infra-vpc
+      SecurityGroupIngress:
+        - 
+          SourceSecurityGroupId: !GetAtt ELBSG.GroupId
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+        - 
+          CidrIp: 0.0.0.0/0
+          FromPort: 22
+          IpProtocol: tcp
+          ToPort: 22
+      GroupDescription: Provide access to AppLB
+
+Outputs:
+  ApplicationURL:
+    Description: Application Web URL
+    Value: !Join ["",["http://", !GetAtt AppLB.DNSName]] 
+    
